@@ -1,0 +1,31 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Coverage / test artifacts
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Logs and OS/IDE
+.DS_Store
+*.log
+.idea/
+.vscode/
+*.swp
+*~
