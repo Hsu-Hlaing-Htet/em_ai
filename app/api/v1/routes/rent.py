@@ -27,7 +27,11 @@ async def ask_rent(
     backend so its existing authorization rules decide what data is visible.
     """
     try:
-        result = await service.answer(question=payload.question, auth_token=auth_token)
+        result = await service.answer(
+            question=payload.question,
+            auth_token=auth_token,
+            profile=payload.profile,
+        )
     except BackendError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

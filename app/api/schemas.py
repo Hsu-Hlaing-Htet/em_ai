@@ -37,6 +37,14 @@ class PropertyQuestionResponse(BaseModel):
 
 class RentQuestionRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
+    profile: RentProfile | None = Field(
+        default=None,
+        description=(
+            "Optional preloaded authenticated customer context from Laravel. "
+            "When provided, FastAPI grounds answers on this and does not call "
+            "Laravel again (avoids proxy re-entrancy on single-worker PHP servers)."
+        ),
+    )
 
 
 class RentQuestionResponse(BaseModel):
