@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: rosewood-royale-ai
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: APP_NAME
+        value: rosewood-ai
+      - key: LOG_LEVEL
+        value: INFO
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o
+      - key: OPENAI_MAX_TOKENS
+        value: "2048"
+      - key: BACKEND_BASE_URL
+        sync: false
+      - key: BACKEND_TIMEOUT_SECONDS
+        value: "15"
+      - key: AI_INTERNAL_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: ""
