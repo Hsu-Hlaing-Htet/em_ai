@@ -69,53 +69,15 @@ class PropertyService:
             if property_id is not None:
                 grounded = [item for item in grounded if item.id == property_id]
             grounded = self._apply_intent_filters(grounded, intent)
-            fetched_count = len(properties)
         elif property_id is not None:
             prop = await self._data_source.get_property(property_id)
             grounded = [prop] if prop else []
-            fetched_count = len(grounded)
         else:
             grounded = await self._data_source.list_properties(
                 query=intent.search_query,
                 purpose=intent.purpose,
             )
-            fetched_count = len(grounded)
             grounded = self._apply_intent_filters(grounded, intent)
-
-        # #region agent log
-        try:
-            import json as _json
-            import time as _time
-
-            with open(
-                "/Users/hsuhtet/rosewood/.cursor/debug-cc4b96.log", "a", encoding="utf-8"
-            ) as _f:
-                _f.write(
-                    _json.dumps(
-                        {
-                            "sessionId": "cc4b96",
-                            "runId": "post-fix",
-                            "hypothesisId": "B,C",
-                            "location": "property_service.py:answer",
-                            "message": "Property search intent and counts",
-                            "data": {
-                                "purpose": intent.purpose,
-                                "search_query": intent.search_query,
-                                "bedrooms": intent.bedrooms,
-                                "location": intent.location,
-                                "amenities": intent.amenities,
-                                "preloaded": properties is not None,
-                                "fetchedCount": fetched_count,
-                                "afterFilterCount": len(grounded),
-                            },
-                            "timestamp": int(_time.time() * 1000),
-                        }
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-        # #endregion
 
         context = to_context("PROPERTIES", grounded)
 

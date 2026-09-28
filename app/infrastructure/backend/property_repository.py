@@ -70,32 +70,6 @@ class BackendPropertyRepository:
         payload = await self._client.get_json("/public/properties", params=params)
         items = normalize_properties_payload(payload)
 
-        # #region agent log
-        try:
-            import json as _json
-            import time as _time
-
-            with open(
-                "/Users/hsuhtet/rosewood/.cursor/debug-cc4b96.log", "a", encoding="utf-8"
-            ) as _f:
-                _f.write(
-                    _json.dumps(
-                        {
-                            "sessionId": "cc4b96",
-                            "runId": "post-fix",
-                            "hypothesisId": "A,B",
-                            "location": "property_repository.py:list_properties",
-                            "message": "Laravel properties fetched",
-                            "data": {"params": params, "count": len(items)},
-                            "timestamp": int(_time.time() * 1000),
-                        }
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-        # #endregion
-
         properties: list[Property] = []
         for item in items:
             try:
