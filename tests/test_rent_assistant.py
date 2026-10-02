@@ -30,7 +30,7 @@ def _run(coro):
 
 def _sample_profile() -> RentProfile:
     return RentProfile(
-        profile=Profile(name="Mg Mg", email="mgmg@gmail.com", phone="+959111"),
+        profile=Profile(name="Mg Mg", email="hsuhtet562@gmail.com", phone="+959111"),
         dashboard={"unpaid_invoices": 1, "paid_invoices": 2},
         contracts=[
             Contract(
