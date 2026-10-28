@@ -294,6 +294,7 @@ Default chat model from config / `.env.example`: `gpt-4o`.
 | `pip install -r requirements.txt` | Install dependencies |
 | `uvicorn app.main:app --reload --port 8001` | Start API with reload |
 | `python -m pytest` | Run tests (install `pytest` if not already present) |
+| `docker build -t rosewood-ai .` | Build the included Docker image |
 
 `pytest` is used by the existing `tests/` suite and `.pytest_cache`, but it is not listed in `requirements.txt`. Install it in the venv when you need to run tests:
 
