@@ -1,371 +1,232 @@
 # Rosewood Royale — AI Service
 
-FastAPI service that answers natural-language property and rent questions for Rosewood Royale.
+FastAPI service for natural-language property discovery and customer rent/billing questions. It assembles context from Laravel data and uses LangChain with OpenAI when configured, with deterministic fallback answers when the model is unavailable. It reads application data through HTTP APIs and does not connect to MySQL or write business records.
 
-Laravel is the only caller in the product architecture. The Vue frontend never talks to this service directly. This service is **read-only** against Rosewood data: it calls Laravel HTTP APIs for grounding and uses LangChain + OpenAI (`ChatOpenAI`) to generate answers.
+The product request path is browser → Vue → Laravel → FastAPI. Laravel owns authentication, authorization, and business rules; the browser never receives an OpenAI key or calls FastAPI directly.
 
-Repository: [Hsu-Hlaing-Htet/em_ai](https://github.com/Hsu-Hlaing-Htet/em_ai)
+Repository: [em_ai](https://github.com/Hsu-Hlaing-Htet/em_ai).
 
----
+## Technology Stack
 
-## Quick Start — Run Order
+- Python; the included Docker runtime uses Python 3.12.
+- FastAPI `>=0.115,<1.0` and Uvicorn for HTTP serving.
+- LangChain OpenAI/Core, httpx, Pydantic 2, and pydantic-settings.
+- pytest for the current offline rent-assistant tests (installed separately).
 
-Start the full system in this order:
+[requirements.txt](requirements.txt) defines dependency ranges, not a fully pinned lockfile. Model defaults and environment loading are defined in [app/core/config.py](app/core/config.py).
 
-1. **MySQL** — required by Laravel
-2. **Laravel Backend** — Terminal 1
-3. **FastAPI AI Service** — Terminal 2 (this repository)
-4. **Vue Frontend** — Terminal 3
+## Prerequisites
 
-| Terminal | Service | Typical command | Local URL |
-| --- | --- | --- | --- |
-| — | MySQL | Start MySQL | `127.0.0.1:3306` |
-| 1 | Laravel Backend | `php artisan serve` (in `em_backend`) | http://localhost:8000 |
-| 2 | FastAPI AI | `uvicorn app.main:app --reload --port 8001` | http://localhost:8001 |
-| 3 | Vue Frontend | `npm run dev` (in `em_frontend`) | http://localhost:5173 |
+- Python **3.12** for parity with the Dockerfile, including `venv` and pip. No local Python version range is declared; do not assume an arbitrary system Python is supported.
+- Git. The examples use macOS/Linux shell syntax; a PowerShell activation command is included below.
+- The [Laravel backend](https://github.com/Hsu-Hlaing-Htet/em_backend#readme), configured with MySQL, migrated, seeded, and running on port `8000`, for real application data.
+- Optional OpenAI API credentials and network access for provider-backed answers. They are not needed for startup, `/health`, deterministic fallback answers, or offline tests.
 
-Connection flow:
+Start MySQL → backend → AI → frontend. This service needs no database driver, migration, or queue worker of its own.
 
-```text
-Browser
-   |
-   v
-Vue Frontend (:5173)
-   |
-   v
-Laravel Backend (:8000)
-   | \
-   |  \--> FastAPI AI (:8001)
-   |         |
-   |         +-----> Laravel API (grounding data)
-   |
-   +-----> MySQL (:3306)
-```
+## Quick Start
 
-Laravel remains the authoritative business and data layer. FastAPI does not replace it.
-
----
-
-## First-Time Setup
-
-Do this once after cloning.
+From this repository's root with Python 3.12 installed and Laravel running:
 
 ```bash
-git clone git@github.com:Hsu-Hlaing-Htet/em_ai.git
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
+```
+
+The template's `BACKEND_BASE_URL=http://127.0.0.1:8000/api` matches the local backend. Leave `OPENAI_API_KEY` empty for fallback mode, or configure it privately for model-generated answers. Match any internal key configured on Laravel before testing the proxy.
+
+In another terminal:
+
+```bash
+curl --fail http://127.0.0.1:8001/health
+```
+
+Expect `{"status":"ok","service":"rosewood-ai"}` with the default service name. `/health` confirms the service is running; it does not check Laravel, MySQL, or OpenAI. Use the request under [Verification](#verification) to exercise the application path.
+
+## Detailed Local Setup
+
+### 1. Clone and create a virtual environment
+
+```bash
+git clone https://github.com/Hsu-Hlaing-Htet/em_ai.git
 cd em_ai
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+python3.12 --version
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` (placeholders only — never commit real keys):
+Skip steps already completed in Quick Start. Keep the virtual environment local and use `python -m pip` so packages install into the interpreter you activated.
 
-```bash
-OPENAI_API_KEY=sk-your-key-here
-OPENAI_MODEL=gpt-4o
+On Windows PowerShell with Python 3.12 installed, use:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+### 2. Configure Laravel connectivity
+
+Set the AI `.env`:
+
+```dotenv
 BACKEND_BASE_URL=http://127.0.0.1:8000/api
+BACKEND_TIMEOUT_SECONDS=15
 ```
 
-Optional: set `AI_INTERNAL_KEY` to the same value as Laravel `AI_SERVICE_INTERNAL_KEY`.
+In the backend `.env`, confirm:
 
-You also need MySQL + Laravel running so grounding API calls succeed. See:
-
-- https://github.com/Hsu-Hlaing-Htet/em_backend
-- https://github.com/Hsu-Hlaing-Htet/em_frontend
-
-Dockerfile uses **Python 3.12**. Local development typically works with a compatible Python 3.x that can install `requirements.txt`.
-
----
-
-## Daily Development
-
-1. Start MySQL
-2. Start Laravel (`php artisan serve` in `em_backend`)
-3. Activate venv and start this service:
-
-```bash
-cd em_ai
-source .venv/bin/activate
-uvicorn app.main:app --reload --port 8001
+```dotenv
+AI_SERVICE_BASE_URL=http://127.0.0.1:8001
+AI_SERVICE_TIMEOUT_SECONDS=60
 ```
 
-4. Start Vue (`npm run dev` in `em_frontend`) when you need the UI
+The AI's Laravel URL **includes `/api`**; Laravel's AI URL has **no `/api` suffix**. If using the internal gate, generate a private shared value and configure it as `AI_INTERNAL_KEY` here and `AI_SERVICE_INTERNAL_KEY` in Laravel. Do not put it in the frontend.
 
-Health: http://localhost:8001/health  
-Interactive docs: http://localhost:8001/docs
+Laravel preloads property/customer context for proxied requests, avoiding a callback into a single-worker local Laravel server. Direct FastAPI requests without preloaded context fetch Laravel APIs themselves. Customer requests forward the Bearer token so Laravel controls data access.
 
----
+### 3. Choose fallback or provider-backed answers
 
-## Running the Full Rosewood Royale System
+Leaving `OPENAI_API_KEY` empty disables model-chain construction; the service still formats answers from grounded data. For provider-backed generation, set your private key in `.env` and use a model available to that account. `OPENAI_MODEL=gpt-4o` is the repository default, not a guarantee of account access.
 
-### Step 1 — Database
-
-Ensure MySQL is up and Laravel can use database `rosewood_royale`.
-
-### Step 2 — Laravel Backend
-
-```bash
-cd em_backend
-php artisan serve
-```
-
-URL: http://localhost:8000  
-Laravel must set `AI_SERVICE_BASE_URL=http://127.0.0.1:8001`.
-
-### Step 3 — FastAPI AI
-
-```bash
-cd em_ai
-source .venv/bin/activate
-uvicorn app.main:app --reload --port 8001
-```
-
-URL: http://localhost:8001
-
-### Step 4 — Vue Frontend
-
-```bash
-cd em_frontend
-npm run dev
-```
-
-URL: http://localhost:5173  
-Frontend `VITE_API_BASE_URL` should be `http://localhost:8000/api`.
-
----
-
-## Verify Everything Is Working
-
-- [ ] `GET http://localhost:8001/health` → `{"status":"ok", ...}`
-- [ ] Laravel is up: `GET http://localhost:8000/up`
-- [ ] Via Laravel proxy (preferred product path):
-
-```bash
-curl -X POST http://localhost:8000/api/public/ai/property/ask \
-  -H 'Content-Type: application/json' \
-  -d '{"question": "What rentals are available?", "purpose": "rent"}'
-```
-
-- [ ] Customer rent assistant (requires a customer Sanctum token from Laravel login):
-
-```bash
-curl -X POST http://localhost:8000/api/customer/ai/rent/ask \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer <laravel-token>' \
-  -d '{"question": "What do I still owe?"}'
-```
-
-- [ ] In the Vue UI, public Concierge and customer rent chat return answers
-
-Direct FastAPI calls are useful for local debugging; production traffic should go Vue → Laravel → FastAPI.
-
----
-
-## Architecture
-
-```text
-Browser
-   |
-   v
-Vue Frontend
-   |
-   v
-Laravel Backend
-   | \
-   |  \--> FastAPI AI
-   |
-   +-----> MySQL
-```
-
-Inside this service:
-
-```text
-route → service (use case) → Laravel HTTP adapter (httpx)
-                          ↓
-                     LLM chain (prompt | ChatOpenAI | parser)
-```
-
-Endpoints:
-
-| Endpoint | Purpose | Auth |
-| --- | --- | --- |
-| `POST /api/v1/property/ask` | Property / listing questions | Optional `X-Rosewood-AI-Internal-Key` when configured |
-| `POST /api/v1/rent/ask` | Caller’s own rent/billing questions | `Authorization: Bearer <token>` forwarded to Laravel |
-| `GET /health` | Health check | Public |
-
----
-
-## Repository Responsibility
-
-This AI service owns:
-
-- FastAPI HTTP API (`/api/v1/...`, `/health`)
-- Property assistant use case and prompts
-- Customer rent assistant use case, privacy/out-of-scope handling, and prompts
-- Context assembly from Laravel public/customer APIs
-- OpenAI chat completion via LangChain
-
-It does **not** own:
-
-- User authentication issuance (Laravel Sanctum)
-- Database writes or schema
-- Invoice/payment/contract business rules
-- Vue UI
-
-Laravel remains the authoritative business and data layer.
-
----
+The service also falls back when a model invocation fails. A successful answer alone does not establish that OpenAI was used; check service logs when verifying provider connectivity. The response's `model` field names the configured model even when fallback formatting supplied the answer. Restart Uvicorn after environment changes because settings and the model factory are cached.
 
 ## Environment Configuration
 
-Copy `.env.example` → `.env`. Variable **names**:
+Use [.env.example](.env.example) as the template. Settings load from the environment and a `.env` in the current working directory, so launch from the repository root. Exported environment variables override `.env` values.
 
-### FastAPI → AI provider
-
-| Variable | Purpose |
+| Variable | Default / behavior |
 | --- | --- |
-| `OPENAI_API_KEY` | OpenAI API key (required for real answers) |
-| `OPENAI_MODEL` | Model name (default `gpt-4o`) |
-| `OPENAI_MAX_TOKENS` | Max tokens (default `2048`) |
+| `OPENAI_API_KEY` | Empty; optional for fallback mode, required for provider-backed generation. |
+| `OPENAI_MODEL` | `gpt-4o`; model identifier sent to the configured provider. |
+| `OPENAI_MAX_TOKENS` | `2048`; model output-token limit. |
+| `BACKEND_BASE_URL` | `http://127.0.0.1:8000/api`; Laravel data API. |
+| `BACKEND_TIMEOUT_SECONDS` | `15`; timeout for HTTP requests to Laravel. |
+| `APP_NAME` | `rosewood-ai`; service name in health output and logs. |
+| `LOG_LEVEL` | `INFO`. |
+| `AI_INTERNAL_KEY` | Empty; when set, protected requests need `X-Rosewood-AI-Internal-Key` with the matching value. |
+| `CORS_ORIGINS` | Comma-separated origins. The example file lists `http://localhost:5173,http://localhost:8080`; code defaults also include other local development origins when the variable is absent. Product traffic uses Laravel, so direct browser access is unnecessary. |
 
-### FastAPI → Laravel
+Do not commit `.env`, API keys, customer tokens, or internal secrets. CORS does not authenticate server-to-server requests. Configure the internal gate and appropriate network restrictions when exposing this service beyond local development; the preloaded context fields are intended for the trusted Laravel proxy.
 
-| Variable | Purpose |
-| --- | --- |
-| `BACKEND_BASE_URL` | Laravel API base (default `http://127.0.0.1:8000/api`) |
-| `BACKEND_TIMEOUT_SECONDS` | HTTP timeout for Laravel calls (default `15`) |
+## Running the Application
 
-### Service / security
+Activate the virtual environment in each new terminal, then run:
 
-| Variable | Purpose |
-| --- | --- |
-| `APP_NAME` | Service name (default `rosewood-ai`) |
-| `LOG_LEVEL` | Logging level |
-| `AI_INTERNAL_KEY` | Optional shared secret; must match Laravel `AI_SERVICE_INTERNAL_KEY` |
-| `CORS_ORIGINS` | Comma-separated origins (mainly for direct browser access; product path uses Laravel proxy) |
+```bash
+source .venv/bin/activate
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
+```
 
-Never commit real API keys.
+- [Health](http://127.0.0.1:8001/health)
+- [Interactive API docs](http://127.0.0.1:8001/docs)
+- [OpenAPI schema](http://127.0.0.1:8001/openapi.json)
 
-Corresponding Laravel variables: `AI_SERVICE_BASE_URL`, `AI_SERVICE_TIMEOUT_SECONDS`, `AI_SERVICE_INTERNAL_KEY`.
+### API surface
 
----
+| Method and path | Purpose | Requirements |
+| --- | --- | --- |
+| `GET /health` | Process/service health | Public, even when the internal gate is enabled. |
+| `POST /api/v1/property/ask` | Property listing questions | Internal header when `AI_INTERNAL_KEY` is set. |
+| `POST /api/v1/rent/ask` | Customer rent/billing questions | Bearer token, plus the internal header when configured. |
+
+The internal gate also exempts `/docs`, `/openapi.json`, and `/redoc`. Direct requests to protected endpoints from the docs still need the internal header when the gate is enabled. Request/response models are in [app/api/schemas.py](app/api/schemas.py).
+
+### Verification
+
+With Laravel and this service running, exercise the preferred product path:
+
+```bash
+curl --fail -X POST http://127.0.0.1:8000/api/public/ai/property/ask \
+  -H 'Accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"What rentals are available?","purpose":"rent"}'
+```
+
+Expect an HTTP 200 response with `data.answer` and `data.properties` in Laravel's response envelope. An empty listing result can be valid; check seeded/available inventory rather than assuming transport failure.
+
+For customer grounding, replace the token placeholder with a local **customer** Sanctum token obtained through Laravel login:
+
+```bash
+curl --fail -X POST http://127.0.0.1:8000/api/customer/ai/rent/ask \
+  -H 'Accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <customer-token>' \
+  -d '{"question":"What do I still owe?"}'
+```
+
+Confirm the response concerns that customer's own billing data. These proxy requests need no internal header from the client: Laravel adds its server-side key. Keep tokens private, including in shell history. Finally, verify the public/customer chat interfaces in the frontend if testing the complete system.
+
+## Running Tests
+
+Install pytest separately because it is not listed in the runtime requirements:
+
+```bash
+source .venv/bin/activate
+python -m pip install pytest
+OPENAI_API_KEY= python -m pytest
+```
+
+For PowerShell, set the empty key inside the Python process so it also overrides any `.env` value:
+
+```powershell
+python -c "import os, pytest; os.environ['OPENAI_API_KEY'] = ''; raise SystemExit(pytest.main())"
+```
+
+[tests/test_rent_assistant.py](tests/test_rent_assistant.py) uses fake rent data and forces the deterministic answer path. Clearing the key prevents construction of a provider client while running these tests. No Laravel server, MySQL database, OpenAI network access, or customer token is required. Coverage includes privacy/out-of-scope handling, preloaded context, missing data, and contract/invoice fallback answers. It does not establish live property retrieval or provider integration. No separate CI test workflow is defined in this repository.
 
 ## Project Structure
 
 ```text
-app/
-├── main.py              # FastAPI app factory, /health, lifespan
-├── api/                 # Routes, schemas, DI, internal auth middleware
-│   └── v1/routes/       # property.py, rent.py
-├── services/            # Property and rent use cases, privacy helpers
-├── llm/                 # ChatOpenAI client, prompts, chains
-├── domain/              # Models and ports
-├── infrastructure/      # Laravel HTTP adapters (httpx)
-└── core/                # Settings (pydantic-settings), logging
-tests/                   # Unit tests (e.g. rent assistant privacy)
-requirements.txt
-Dockerfile
-render.yaml
+app/main.py              FastAPI application, lifespan, health endpoint
+app/api/                 Schemas, dependencies, internal-key middleware
+app/api/v1/routes/       Property and rent HTTP endpoints
+app/services/            Context assembly, use cases, privacy/fallback behavior
+app/llm/                 Model factory, prompts, and LangChain runnables
+app/domain/              Models and data-source interfaces
+app/infrastructure/      Laravel HTTP adapters
+app/core/                Environment settings and logging
+tests/                   Offline rent-assistant tests
+requirements.txt         Runtime dependency ranges
+Dockerfile               Python 3.12 container runtime
+render.yaml              Render service configuration
 ```
-
----
-
-## Tech Stack
-
-Confirmed from `requirements.txt` / `Dockerfile`:
-
-- Python (Docker image: `python:3.12-slim-bookworm`)
-- FastAPI `>=0.115,<1.0`
-- Uvicorn `[standard] >=0.30`
-- LangChain OpenAI / Core (`langchain-openai`, `langchain-core`)
-- httpx, Pydantic, pydantic-settings
-
-Default chat model from config / `.env.example`: `gpt-4o`.
-
----
-
-## Common Commands
-
-| Command | Description |
-| --- | --- |
-| `python3 -m venv .venv` | Create virtual environment |
-| `source .venv/bin/activate` | Activate venv (Unix/macOS) |
-| `pip install -r requirements.txt` | Install dependencies |
-| `uvicorn app.main:app --reload --port 8001` | Start API with reload |
-| `python -m pytest` | Run tests (install `pytest` if not already present) |
-| `docker build -t rosewood-ai .` | Build the included Docker image |
-
-`pytest` is used by the existing `tests/` suite and `.pytest_cache`, but it is not listed in `requirements.txt`. Install it in the venv when you need to run tests:
-
-```bash
-pip install pytest
-python -m pytest
-```
-
----
-
-## Testing
-
-Unit coverage includes rent-assistant grounding/privacy behavior under `tests/test_rent_assistant.py`.
-
-```bash
-source .venv/bin/activate
-pip install pytest   # if needed
-python -m pytest
-```
-
-There is no separate CI test script defined in this repository beyond what you run locally.
-
----
 
 ## Troubleshooting
 
-**AI unavailable from the website**  
-→ Confirm this service: http://localhost:8001/health  
-→ Confirm Laravel `AI_SERVICE_BASE_URL=http://127.0.0.1:8001`  
-→ Confirm Laravel can reach FastAPI (no firewall / wrong host)
+| Symptom | Check or resolution |
+| --- | --- |
+| Import error / package missing | Activate `.venv`, confirm `python --version`, and run `python -m pip install -r requirements.txt` from the root. |
+| `.env` changes have no effect | Start from the repository root, check exported overrides, and restart Uvicorn; settings/model factories are cached. |
+| Health works but chat fails | Health checks no dependencies. Test Laravel `/up` and the proxy request above; inspect both service logs. |
+| Protected FastAPI request returns 403 | Supply the internal header for direct debugging, or match AI `AI_INTERNAL_KEY` with backend `AI_SERVICE_INTERNAL_KEY` for the proxy. |
+| Customer request returns 401 / 403 | Obtain a valid customer Bearer token from Laravel; confirm the account's role and authorization. |
+| Grounding request fails / returns 502 | Check `BACKEND_BASE_URL` includes `/api`, Laravel/MySQL availability, and the customer's accessible data. |
+| Answer uses fallback unexpectedly | Check whether the key is empty and inspect warnings about model invocation failures, credentials, account model access, or network/timeouts. |
+| Port 8001 is occupied | Stop the conflicting process or change Uvicorn's port and Laravel's `AI_SERVICE_BASE_URL` together. |
+| pytest is missing | Install it explicitly in the active virtual environment; it is not a runtime dependency. |
 
-**401 / internal key errors**  
-→ If Laravel sets `AI_SERVICE_INTERNAL_KEY`, set the same value as `AI_INTERNAL_KEY` here (or clear both for local-only work)
+## Deployment Notes
 
-**Empty or failed grounding / backend errors in logs**  
-→ Confirm Laravel is running  
-→ Confirm `BACKEND_BASE_URL=http://127.0.0.1:8000/api`  
-→ Confirm MySQL and seeded property/customer data exist
+[Dockerfile](Dockerfile) builds a Python 3.12 image and starts Uvicorn on `0.0.0.0:${PORT:-8001}` without reload. [render.yaml](render.yaml) configures `/health` and the service environment. Build locally with:
 
-**OpenAI / model errors**  
-→ Confirm `OPENAI_API_KEY` is set in `.env`  
-→ Confirm network access to OpenAI from your machine
+```bash
+docker build -t rosewood-ai .
+docker run --rm -p 8001:8001 --env-file .env rosewood-ai
+```
 
-**Port 8001 in use**  
-→ Stop the other process or change the uvicorn `--port` **and** update Laravel `AI_SERVICE_BASE_URL` to match
-
----
-
-## Deployment
-
-Confirmed in-repo:
-
-- `Dockerfile` — Python 3.12, exposes port 8001, starts `uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8001}`
-- `render.yaml` — Render web service `rosewood-royale-ai`, health check `/health`, env placeholders for OpenAI and `BACKEND_BASE_URL`
-
-Set secrets only in the platform environment. Do not commit keys.
-
-Backend `.env.example` notes a production AI base URL shape of `https://rosewood-royale-ai.onrender.com` (no trailing slash) for Laravel `AI_SERVICE_BASE_URL`.
-
----
+Before running a container, set `BACKEND_BASE_URL` to a Laravel URL reachable **from that container**; `127.0.0.1` inside it points to the container itself. Likewise, deployed Laravel must use the deployed AI origin, without an `/api` suffix. Supply secrets in the hosting environment, enable the internal gate, and restrict access as appropriate. This service owns no persistent application database.
 
 ## Related Repositories
 
-- Frontend: https://github.com/Hsu-Hlaing-Htet/em_frontend
-- Backend: https://github.com/Hsu-Hlaing-Htet/em_backend
-- AI: https://github.com/Hsu-Hlaing-Htet/em_ai
+- [Backend — em_backend](https://github.com/Hsu-Hlaing-Htet/em_backend)
+- [Frontend — em_frontend](https://github.com/Hsu-Hlaing-Htet/em_frontend)
+- [AI — em_ai](https://github.com/Hsu-Hlaing-Htet/em_ai)
 
----
-
-## Developer
-
-Designed and Developed by Hsu_Hlaing-Htet
-
-https://github.com/Hsu-Hlaing-Htet
+Developed by [Hsu-Hlaing-Htet](https://github.com/Hsu-Hlaing-Htet).
